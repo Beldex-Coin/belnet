@@ -26,6 +26,10 @@ point) at a reduced-anonymity cost. the effective value is logged at
 startup as `configured with numHops=`.
 ### paths
 number of paths to maintain at any given time, defaults to `6`.
+### path-alignment-timeout
+how long to wait (in seconds) for a path to align to a pivot router when
+establishing a connection to a remote `.bdx` address, defaults to `30`.
+this bounds the worst case "connecting..." wait on first connection.
 ### blacklist-mnode
 adds a `.mnode` to path build blacklist
 ### exit-node

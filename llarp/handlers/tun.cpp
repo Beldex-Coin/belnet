@@ -322,12 +322,8 @@ namespace llarp
       
       m_BaseV6Address = conf.m_baseV6Address;
 
-      if (conf.m_PathAlignmentTimeout)
-      {
-        m_PathAlignmentTimeout = *conf.m_PathAlignmentTimeout;
-      }
-      else
-        m_PathAlignmentTimeout = service::Endpoint::PathAlignmentTimeout();
+      // note: [network]:path-alignment-timeout is consumed by the base
+      // service::Endpoint::Configure / PathAlignmentTimeout()
 
       for (const auto& item : conf.m_mapAddrs)
       {

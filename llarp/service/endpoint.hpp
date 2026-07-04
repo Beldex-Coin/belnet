@@ -324,11 +324,16 @@ namespace llarp
       bool
       ShouldBuildMore(llarp_time_t now) const override;
 
+      /// how long to wait for a path to align to a pivot router when
+      /// establishing a path to a remote endpoint. honors the
+      /// [network]:path-alignment-timeout config option (audit finding D9:
+      /// this used to return a hardcoded 30s and silently ignore the
+      /// parsed config value), falling back to 30s when unset.
       virtual llarp_time_t
       PathAlignmentTimeout() const
       {
         constexpr auto DefaultPathAlignmentTimeout = 30s;
-        return DefaultPathAlignmentTimeout;
+        return m_PathAlignmentTimeout.value_or(DefaultPathAlignmentTimeout);
       }
 
       bool
@@ -480,6 +485,9 @@ namespace llarp
      protected:
       /// parent context that owns this endpoint
       Context* const context;
+
+      /// configured [network]:path-alignment-timeout, if set
+      std::optional<llarp_time_t> m_PathAlignmentTimeout;
 
       virtual bool
       SupportsV6() const = 0;

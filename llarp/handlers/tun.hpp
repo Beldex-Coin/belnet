@@ -174,12 +174,6 @@ namespace llarp
         return m_OwnedRanges;
       }
 
-      llarp_time_t
-      PathAlignmentTimeout() const override
-      {
-        return m_PathAlignmentTimeout;
-      }
-
       /// ip packet against any exit policies we have
       /// returns false if this traffic is disallowed by any of those policies
       /// returns true otherwise
@@ -314,8 +308,6 @@ namespace llarp
       std::optional<net::TrafficPolicy> m_TrafficPolicy;
       /// ranges we advetise as reachable
       std::set<IPRange> m_OwnedRanges;
-      /// how long to wait for path alignment
-      llarp_time_t m_PathAlignmentTimeout;
 
       /// a file to load / store the ephemeral address map to
       std::optional<fs::path> m_PersistAddrMapFile;

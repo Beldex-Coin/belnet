@@ -297,3 +297,31 @@ mock0=443
     REQUIRE_NOTHROW(run_config_test(env, ini_str));
   }
 }
+TEST_CASE("path-alignment-timeout is parsed into NetworkConfig", "[config]")
+{
+  std::unordered_multimap<std::string, llarp::IPRange> env{
+      {"lo", llarp::IPRange::FromIPv4(127, 0, 0, 1, 8)},
+  };
+  mocks::Network mock_net{env};
+  auto conf = std::make_shared<UnitTestConfig>(&mock_net);
+
+  SECTION("explicit value is parsed")
+  {
+    conf->LoadString("[network]\npath-alignment-timeout=15\n", false);
+    REQUIRE(conf->network.m_PathAlignmentTimeout.has_value());
+    // the endpoint getter (Endpoint::PathAlignmentTimeout) returns this
+    // value when set; 15s in and 15s out
+    CHECK(*conf->network.m_PathAlignmentTimeout == 15s);
+  }
+
+  SECTION("unset leaves the optional empty so the 30s default applies")
+  {
+    conf->LoadString("", false);
+    CHECK(not conf->network.m_PathAlignmentTimeout.has_value());
+  }
+
+  SECTION("non-positive values are rejected")
+  {
+    CHECK_THROWS(conf->LoadString("[network]\npath-alignment-timeout=0\n", false));
+  }
+}

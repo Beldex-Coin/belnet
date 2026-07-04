@@ -72,6 +72,10 @@ namespace llarp
       if (conf.m_Hops.has_value())
         numHops = *conf.m_Hops;
 
+      // honor [network]:path-alignment-timeout (previously parsed but never
+      // consulted by the base endpoint - audit finding D9)
+      m_PathAlignmentTimeout = conf.m_PathAlignmentTimeout;
+
       // make the effective hop count visible: this is the value the
       // [network]:hops config option (set e.g. by the mobile app through the
       // JNI config bridge for a 3-hop fast mode) actually resolved to
