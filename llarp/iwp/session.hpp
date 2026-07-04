@@ -3,8 +3,10 @@
 #include <llarp/link/session.hpp>
 #include "linklayer.hpp"
 #include "message_buffer.hpp"
+#include "rtt.hpp"
 #include <llarp/net/ip_address.hpp>
 
+#include <algorithm>
 #include <map>
 #include <unordered_set>
 #include <deque>
@@ -176,6 +178,45 @@ namespace llarp
 
       llarp_time_t m_LastTX = 0s;
       llarp_time_t m_LastRX = 0s;
+
+      /// initial congestion window in bytes
+      static constexpr uint64_t InitialCWND = 64 * 1024;
+      /// congestion window floor in bytes
+      static constexpr uint64_t MinCWND = 16 * 1024;
+      /// congestion window ceiling in bytes
+      static constexpr uint64_t MaxCWND = 1024 * 1024;
+      /// additive increase step (one MSS equivalent) in bytes
+      static constexpr uint64_t CWNDGrowth = 1500;
+
+      /// smoothed RTT / RTO state for this session
+      RttEstimator m_RTT;
+      /// payload bytes of currently unacked (started) outbound messages
+      uint64_t m_InFlightBytes = 0;
+      /// congestion window: cap on in-flight payload bytes; messages beyond
+      /// this stay queued in m_TXMsgs until the window opens up (AIMD)
+      uint64_t m_CWND = InitialCWND;
+
+      /// message abandon threshold, scaled with measured RTT but never below
+      /// the legacy fixed DeliveryTimeout
+      llarp_time_t
+      DeliveryTimeoutFor() const
+      {
+        return std::max(DeliveryTimeout, m_RTT.ResendInterval() * 4);
+      }
+
+      /// put a queued outbound message on the wire for the first time
+      void
+      TransmitMessage(OutboundMessage& msg, llarp_time_t now);
+
+      /// account for a fully acked outbound message: update the RTT estimate
+      /// (Karn's rule: only if it was never retransmitted) and grow the
+      /// congestion window additively
+      void
+      OnMessageAcked(OutboundMessage& msg, llarp_time_t now);
+
+      /// account for a loss/retransmission event: halve the congestion window
+      void
+      OnRetransmitEvent();
 
       // accumulate for periodic rate calculation
       uint64_t m_TXRate = 0;

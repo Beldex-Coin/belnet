@@ -49,9 +49,9 @@ namespace llarp
     }
 
     bool
-    OutboundMessage::ShouldFlush(llarp_time_t now) const
+    OutboundMessage::ShouldFlush(llarp_time_t now, llarp_time_t interval) const
     {
-      return now - m_LastFlush >= TXFlushInterval;
+      return now - m_LastFlush >= interval;
     }
 
     void
@@ -100,10 +100,10 @@ namespace llarp
     }
 
     bool
-    OutboundMessage::IsTimedOut(const llarp_time_t now) const
+    OutboundMessage::IsTimedOut(const llarp_time_t now, const llarp_time_t timeout) const
     {
       // TODO: make configurable by outbound message deliverer
-      return now > m_StartedAt && now - m_StartedAt > DeliveryTimeout;
+      return now > m_StartedAt && now - m_StartedAt > timeout;
     }
 
     void

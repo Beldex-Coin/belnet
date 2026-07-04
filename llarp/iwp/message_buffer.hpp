@@ -51,6 +51,13 @@ namespace llarp
       ShortHash m_Digest;
       llarp_time_t m_StartedAt = 0s;
       uint16_t m_ResendPriority;
+      /// true once the message has actually been put on the wire; messages
+      /// held back by the congestion window are not started yet
+      bool m_Started = false;
+      /// when the message was first transmitted (for RTT sampling)
+      llarp_time_t m_FirstTxAt = 0s;
+      /// how many times fragments of this message have been retransmitted
+      uint16_t m_Retransmits = 0;
 
       bool
       operator<(const OutboundMessage& other) const
@@ -71,7 +78,7 @@ namespace llarp
       FlushUnAcked(std::function<void(ILinkSession::Packet_t)> sendpkt, llarp_time_t now);
 
       bool
-      ShouldFlush(llarp_time_t now) const;
+      ShouldFlush(llarp_time_t now, llarp_time_t interval) const;
 
       void
       Completed();
@@ -80,7 +87,7 @@ namespace llarp
       IsTransmitted() const;
 
       bool
-      IsTimedOut(llarp_time_t now) const;
+      IsTimedOut(llarp_time_t now, llarp_time_t timeout) const;
 
       void
       InformTimeout();

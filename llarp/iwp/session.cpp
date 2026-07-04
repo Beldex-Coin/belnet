@@ -5,6 +5,7 @@
 #include <llarp/util/meta/memfn.hpp>
 #include <llarp/router/abstractrouter.hpp>
 
+#include <limits>
 #include <queue>
 
 namespace llarp
@@ -201,14 +202,68 @@ namespace llarp
           m_TXMsgs.emplace(msgid, OutboundMessage{msgid, std::move(buf), now, completed, priority})
               .first->second;
       TriggerPump();
+      // only transmit right away if we are within the congestion window,
+      // otherwise the message stays queued and Pump() will start it once
+      // the window opens up again
+      if (m_InFlightBytes + bufsz <= m_CWND)
+      {
+        TransmitMessage(msg, now);
+        LogDebug("send message ", msgid, " to ", m_RemoteAddr);
+      }
+      else
+      {
+        LogDebug(
+            "queue message ",
+            msgid,
+            " to ",
+            m_RemoteAddr,
+            " (cwnd full: ",
+            m_InFlightBytes,
+            "+",
+            bufsz,
+            " > ",
+            m_CWND,
+            ")");
+      }
+      m_Stats.totalInFlightTX++;
+      return true;
+    }
+
+    void
+    Session::TransmitMessage(OutboundMessage& msg, llarp_time_t now)
+    {
+      msg.m_Started = true;
+      msg.m_FirstTxAt = now;
+      m_InFlightBytes += msg.m_Data.size();
       EncryptAndSend(msg.XMIT());
-      if (bufsz > FragmentSize)
+      if (msg.m_Data.size() > FragmentSize)
       {
         msg.FlushUnAcked(util::memFn(&Session::EncryptAndSend, this), now);
       }
-      m_Stats.totalInFlightTX++;
-      LogDebug("send message ", msgid, " to ", m_RemoteAddr);
-      return true;
+    }
+
+    void
+    Session::OnMessageAcked(OutboundMessage& msg, llarp_time_t now)
+    {
+      if (msg.m_Started)
+      {
+        const auto sz = msg.m_Data.size();
+        m_InFlightBytes = m_InFlightBytes >= sz ? m_InFlightBytes - sz : 0;
+        if (msg.m_Retransmits == 0 and msg.m_FirstTxAt > 0s and now > msg.m_FirstTxAt)
+        {
+          // Karn's rule: only sample RTT from messages never retransmitted
+          m_RTT.Update(now - msg.m_FirstTxAt);
+          // additive increase on a clean ack round
+          m_CWND = std::min(m_CWND + CWNDGrowth, MaxCWND);
+        }
+      }
+    }
+
+    void
+    Session::OnRetransmitEvent()
+    {
+      // multiplicative decrease on loss
+      m_CWND = std::max(m_CWND / 2, MinCWND);
     }
 
     void
@@ -266,13 +321,29 @@ namespace llarp
 
         for (auto& [id, msg] : m_TXMsgs)
         {
-          if (msg.ShouldFlush(now))
-              to_resend.push(&msg);
+          if (not msg.m_Started)
+          {
+            // queued behind the congestion window; start it if there is room
+            if (m_InFlightBytes + msg.m_Data.size() <= m_CWND)
+              TransmitMessage(msg, now);
+            continue;
+          }
+          // resend interval adapts to the measured RTT and backs off
+          // exponentially per successive retransmission of this message
+          if (msg.ShouldFlush(now, m_RTT.BackedOffResendInterval(msg.m_Retransmits)))
+            to_resend.push(&msg);
         }
         if (not to_resend.empty())
         {
-          for (auto& msg = to_resend.top(); not to_resend.empty(); to_resend.pop())
+          OnRetransmitEvent();
+          while (not to_resend.empty())
+          {
+            auto* msg = to_resend.top();
+            to_resend.pop();
+            if (msg->m_Retransmits < std::numeric_limits<uint16_t>::max())
+              msg->m_Retransmits++;
             msg->FlushUnAcked(util::memFn(&Session::EncryptAndSend, this), now);
+          }
         }
       }
       if (not m_EncryptNext.empty())
@@ -340,6 +411,11 @@ namespace llarp
           {"txPktsDropped", m_Stats.totalDroppedTX},
           {"txPktsInFlight", m_Stats.totalInFlightTX},
 
+          {"srttMs", static_cast<uint64_t>(m_RTT.srtt.count())},
+          {"rttVarMs", static_cast<uint64_t>(m_RTT.rttvar.count())},
+          {"cwndBytes", m_CWND},
+          {"inFlightBytes", m_InFlightBytes},
+
           {"state", StateToString(m_State)},
           {"inbound", m_Inbound},
           {"replayFilter", m_ReplayFilter.size()},
@@ -390,13 +466,22 @@ namespace llarp
       // remove pending outbound messsages that timed out
       // inform waiters
       {
+        // abandon threshold scales with the measured RTT but is never lower
+        // than the legacy fixed timeout
+        const auto timeout = DeliveryTimeoutFor();
         auto itr = m_TXMsgs.begin();
         while (itr != m_TXMsgs.end())
         {
-          if (itr->second.IsTimedOut(now))
+          if (itr->second.IsTimedOut(now, timeout))
           {
             m_Stats.totalDroppedTX++;
             m_Stats.totalInFlightTX--;
+            if (itr->second.m_Started)
+            {
+              const auto sz = itr->second.m_Data.size();
+              m_InFlightBytes = m_InFlightBytes >= sz ? m_InFlightBytes - sz : 0;
+              OnRetransmitEvent();
+            }
             LogTrace("Dropped unacked packet to ", m_RemoteAddr);
             itr->second.InformTimeout();
             itr = m_TXMsgs.erase(itr);
@@ -739,6 +824,7 @@ namespace llarp
         {
           m_Stats.totalAckedTX++;
           m_Stats.totalInFlightTX--;
+          OnMessageAcked(itr->second, m_Parent->Now());
           itr->second.Completed();
           m_TXMsgs.erase(itr);
         }
@@ -764,6 +850,10 @@ namespace llarp
       auto itr = m_TXMsgs.find(txid);
       if (itr != m_TXMsgs.end())
       {
+        // this is a retransmission: exclude the message from RTT sampling
+        // (Karn's rule)
+        if (itr->second.m_Retransmits < std::numeric_limits<uint16_t>::max())
+          itr->second.m_Retransmits++;
         EncryptAndSend(itr->second.XMIT());
       }
       m_LastRX = m_Parent->Now();
@@ -917,11 +1007,16 @@ namespace llarp
       if (itr->second.IsTransmitted())
       {
         LogDebug("sent message ", itr->first, " to ", m_RemoteAddr);
+        OnMessageAcked(itr->second, now);
         itr->second.Completed();
         itr = m_TXMsgs.erase(itr);
       }
       else
       {
+        // partial ack: retransmit missing fragments now and exclude this
+        // message from RTT sampling (Karn's rule)
+        if (itr->second.m_Retransmits < std::numeric_limits<uint16_t>::max())
+          itr->second.m_Retransmits++;
         itr->second.FlushUnAcked(util::memFn(&Session::EncryptAndSend, this), now);
       }
     }
