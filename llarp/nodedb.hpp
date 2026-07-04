@@ -9,6 +9,7 @@
 #include "dht/key.hpp"
 #include "crypto/crypto.hpp"
 
+#include <random>
 #include <set>
 #include <optional>
 #include <unordered_set>
@@ -104,6 +105,61 @@ namespace llarp
       }
 
       return std::nullopt;
+    }
+
+    /// maximum number of candidates sampled by GetWeightedRandom
+    static constexpr size_t MaxWeightedRandomCandidates = 8;
+
+    /// get a random router that satisfies the given filter, weighted by the
+    /// given weight function: sample up to MaxWeightedRandomCandidates
+    /// filter-passing candidates uniformly at random and pick one of them
+    /// with probability proportional to weightOf(rc) (which must return a
+    /// double >= 0)
+    template <typename Filter, typename Weight>
+    std::optional<RouterContact>
+    GetWeightedRandom(Filter visit, Weight weightOf) const
+    {
+      util::NullLock lock{m_Access};
+
+      std::vector<const decltype(m_Entries)::value_type*> entries;
+      for (const auto& entry : m_Entries)
+        entries.push_back(&entry);
+
+      llarp::CSRNG rng{};
+      std::shuffle(entries.begin(), entries.end(), rng);
+
+      std::vector<std::pair<double, const RouterContact*>> candidates;
+      double totalWeight = 0.;
+      for (const auto entry : entries)
+      {
+        if (candidates.size() >= MaxWeightedRandomCandidates)
+          break;
+        if (not visit(entry->second.rc))
+          continue;
+        const double weight = weightOf(entry->second.rc);
+        if (weight < 0.)
+          continue;
+        totalWeight += weight;
+        candidates.emplace_back(weight, &entry->second.rc);
+      }
+
+      if (candidates.empty())
+        return std::nullopt;
+
+      // if all weights are zero fall back to uniform choice among candidates
+      if (totalWeight <= 0.)
+        return *candidates[std::uniform_int_distribution<size_t>{0, candidates.size() - 1}(rng)]
+                    .second;
+
+      double target =
+          std::uniform_real_distribution<double>{0., totalWeight}(rng);
+      for (const auto& [weight, rc] : candidates)
+      {
+        target -= weight;
+        if (target <= 0.)
+          return *rc;
+      }
+      return *candidates.back().second;
     }
 
     /// visit all entries

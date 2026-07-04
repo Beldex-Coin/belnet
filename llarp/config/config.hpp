@@ -96,6 +96,10 @@ namespace llarp
     /// set of countrys to exclude from path building (2 char country code)
     std::unordered_set<std::string> m_ExcludeCountries;
 
+    /// prefer historically lower-latency routers when picking middle hops
+    /// (bounded bias, clients only)
+    bool m_LatencyAware = false;
+
     void
     defineConfigOptions(ConfigDefinition& conf, const ConfigGenParameters& params);
 

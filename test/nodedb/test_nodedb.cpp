@@ -65,3 +65,70 @@ TEST_CASE("FindClosestTo returns properly ordered set", "[nodedb][dht]")
   REQUIRE(c.pubkey == results[0].pubkey);
   REQUIRE(b.pubkey == results[1].pubkey);
 }
+
+TEST_CASE("GetWeightedRandom respects weights", "[nodedb]")
+{
+  llarp_nodedb nodeDB{fs::current_path(), nullptr};
+
+  // two routers: one with 4x the weight of the other
+  llarp::RouterContact heavy;
+  heavy.pubkey[0] = 1;
+  nodeDB.Put(heavy);
+
+  llarp::RouterContact light;
+  light.pubkey[0] = 2;
+  nodeDB.Put(light);
+
+  REQUIRE(2 == nodeDB.NumLoaded());
+
+  auto acceptAll = [](const llarp::RouterContact&) { return true; };
+  auto weightOf = [&](const llarp::RouterContact& rc) -> double {
+    return rc.pubkey[0] == 1 ? 4.0 : 1.0;
+  };
+
+  constexpr int draws = 10000;
+  int heavyPicked = 0;
+  for (int i = 0; i < draws; ++i)
+  {
+    auto maybe = nodeDB.GetWeightedRandom(acceptAll, weightOf);
+    REQUIRE(maybe.has_value());
+    if (maybe->pubkey[0] == 1)
+      ++heavyPicked;
+  }
+  // expected ratio is 4:1 => heavy picked ~80% of the time
+  const double frac = double(heavyPicked) / draws;
+  CHECK(frac > 0.75);
+  CHECK(frac < 0.85);
+}
+
+TEST_CASE("GetWeightedRandom respects filter and empty db", "[nodedb]")
+{
+  llarp_nodedb nodeDB{fs::current_path(), nullptr};
+
+  auto acceptAll = [](const llarp::RouterContact&) { return true; };
+  auto weightOne = [](const llarp::RouterContact&) -> double { return 1.0; };
+
+  // empty db yields nothing
+  CHECK(not nodeDB.GetWeightedRandom(acceptAll, weightOne).has_value());
+
+  llarp::RouterContact a;
+  a.pubkey[0] = 1;
+  nodeDB.Put(a);
+
+  llarp::RouterContact b;
+  b.pubkey[0] = 2;
+  nodeDB.Put(b);
+
+  // filter that rejects everything yields nothing
+  auto rejectAll = [](const llarp::RouterContact&) { return false; };
+  CHECK(not nodeDB.GetWeightedRandom(rejectAll, weightOne).has_value());
+
+  // filter that only accepts b always yields b
+  auto onlyB = [](const llarp::RouterContact& rc) { return rc.pubkey[0] == 2; };
+  for (int i = 0; i < 100; ++i)
+  {
+    auto maybe = nodeDB.GetWeightedRandom(onlyB, weightOne);
+    REQUIRE(maybe.has_value());
+    CHECK(maybe->pubkey[0] == 2);
+  }
+}

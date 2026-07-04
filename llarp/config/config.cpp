@@ -1320,6 +1320,18 @@ namespace llarp
             "of the given size.",
             "E.g. 16 ensures that all routers are using IPs from distinct /16 IP ranges."});
 
+    conf.defineOption<bool>(
+        "paths",
+        "latency-aware",
+        Default{true},
+        ClientOnly,
+        AssignmentAcceptor(m_LatencyAware),
+        Comment{
+            "Whether to prefer routers with historically lower measured latency when picking",
+            "middle hops for paths. The preference is bounded (at most 4x) so path diversity",
+            "is preserved. Set to false for fully uniform middle hop selection.",
+        });
+
 #ifdef WITH_GEOIP
     conf.defineOption<std::string>(
         "paths",

@@ -12,6 +12,7 @@
 #include <llarp/tooling/path_event.hpp>
 #include <llarp/link/link_manager.hpp>
 
+#include <algorithm>
 #include <functional>
 
 namespace llarp
@@ -366,6 +367,27 @@ namespace llarp
       else
         return std::nullopt;
 
+      // bounded latency-aware selection (audit finding D1): when enabled,
+      // middle hops are picked among a small random candidate set with
+      // probability weighted by their historical latency contribution.
+      // unknown routers get weight 1.0 (the median) so new relays still get
+      // traffic, and the bias is capped to [0.25, 4.0] to preserve anonymity
+      // set diversity. first hop and endpoint selection are unchanged.
+      const bool latencyAware = pathConfig.m_LatencyAware;
+      const auto medianLatency =
+          latencyAware ? m_router->routerProfiling().MedianEstLatency() : 0s;
+      auto hopWeight = [r = m_router, medianLatency](const auto& rc) -> double {
+        if (medianLatency <= 0s)
+          return 1.0;
+        const auto estimated = r->routerProfiling().EstLatencyFor(rc.pubkey);
+        if (estimated <= 0s)
+          return 1.0;
+        constexpr auto minLatency = 5ms;
+        const double weight = static_cast<double>(medianLatency.count())
+            / static_cast<double>(std::max(estimated, llarp_time_t{minLatency}).count());
+        return std::clamp(weight, 0.25, 4.0);
+      };
+
       for (size_t idx = hops.size(); idx < numHops; ++idx)
       {
         if (idx + 1 == numHops)
@@ -399,7 +421,13 @@ namespace llarp
             return rc.pubkey != endpointRC.pubkey;
           };
 
-          if (const auto maybe = m_router->nodedb()->GetRandom(filter))
+          std::optional<RouterContact> maybe;
+          if (latencyAware)
+            maybe = m_router->nodedb()->GetWeightedRandom(filter, hopWeight);
+          else
+            maybe = m_router->nodedb()->GetRandom(filter);
+
+          if (maybe)
             hops.emplace_back(*maybe);
           else
             return std::nullopt;

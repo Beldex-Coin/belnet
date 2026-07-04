@@ -116,6 +116,14 @@ namespace llarp
     std::vector<std::pair<RouterID, llarp_time_t>>
     GetLatencyEstimates(size_t maxEntries) const EXCLUDES(m_ProfilesMutex);
 
+    /// estimated latency contribution of a router, 0 if we have no samples
+    llarp_time_t
+    EstLatencyFor(const RouterID& r) const EXCLUDES(m_ProfilesMutex);
+
+    /// median of all per-router latency estimates, 0 if we have no samples
+    llarp_time_t
+    MedianEstLatency() const EXCLUDES(m_ProfilesMutex);
+
     void
     MarkHopFail(const RouterID& r) EXCLUDES(m_ProfilesMutex);
 

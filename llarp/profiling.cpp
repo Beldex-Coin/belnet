@@ -5,6 +5,9 @@
 #include "util/file.hpp"
 #include "util/logging.hpp"
 
+#include <algorithm>
+#include <vector>
+
 using oxenc::bt_dict_consumer;
 using oxenc::bt_dict_producer;
 
@@ -296,6 +299,36 @@ namespace llarp
         ret.emplace_back(item->first, item->second.EstLatency());
     }
     return ret;
+  }
+
+  llarp_time_t
+  Profiling::EstLatencyFor(const RouterID& r) const
+  {
+    util::Lock lock{m_ProfilesMutex};
+    auto itr = m_Profiles.find(r);
+    if (itr == m_Profiles.end())
+      return 0s;
+    return itr->second.EstLatency();
+  }
+
+  llarp_time_t
+  Profiling::MedianEstLatency() const
+  {
+    std::vector<llarp_time_t> estimates;
+    {
+      util::Lock lock{m_ProfilesMutex};
+      estimates.reserve(m_Profiles.size());
+      for (const auto& [rid, profile] : m_Profiles)
+      {
+        if (profile.latencySamples > 0)
+          estimates.push_back(profile.EstLatency());
+      }
+    }
+    if (estimates.empty())
+      return 0s;
+    const auto mid = estimates.size() / 2;
+    std::nth_element(estimates.begin(), estimates.begin() + mid, estimates.end());
+    return estimates[mid];
   }
 
   bool
