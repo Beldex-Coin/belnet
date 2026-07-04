@@ -47,6 +47,7 @@ namespace llarp
       auto pub = m_ExitIdentity.toPublic();
       obj["exitIdentity"] = pub.ToString();
       obj["endpoint"] = m_ExitRouter.ToString();
+      obj["queueDrops"] = m_UpstreamQueueDrops;
       return obj;
     }
 
@@ -236,9 +237,13 @@ namespace llarp
         llarp::net::IPPacket pkt, const size_t N, service::ProtocolType t)
     {
       auto& queue = m_Upstream[pkt.size() / N];
-      // queue overflow
-      if (queue.size() >= MaxUpstreamQueueLength)
-        return false;
+      // queue overflow: drop from the front (oldest) instead of rejecting
+      // the new packet so standing queue delay stays bounded
+      while (queue.size() >= MaxUpstreamQueueLength)
+      {
+        queue.pop_front();
+        ++m_UpstreamQueueDrops;
+      }
       if (queue.size() == 0)
       {
         queue.emplace_back();

@@ -37,3 +37,42 @@ TEST_CASE("UniqueEndpointSet_t has unique endpoints", "[path]")
       set.emplace(MakePath({'d', 'c', 'b', 'a'})).second;
   REQUIRE(inserted_second);
 }
+
+TEST_CASE("stale traffic events are detected and newest survive", "[path][aqm]")
+{
+  using namespace std::literals;
+  using llarp::path::TrafficEventIsStale;
+  using llarp::path::transit_queue_max_age;
+
+  const llarp_time_t now = 10000ms;
+
+  // build a queue with a mix of stale and fresh events
+  llarp::path::IHopHandler::TrafficQueue_t queue;
+  for (int i = 0; i < 8; ++i)
+  {
+    auto& ev = queue.emplace_back();
+    // first half stale (older than max age), second half fresh
+    ev.queuedAt = i < 4 ? now - transit_queue_max_age - 50ms : now - 10ms;
+  }
+
+  size_t stale = 0;
+  size_t fresh = 0;
+  for (const auto& ev : queue)
+  {
+    if (TrafficEventIsStale(ev, now, transit_queue_max_age))
+      ++stale;
+    else
+      ++fresh;
+  }
+  CHECK(stale == 4);
+  CHECK(fresh == 4);
+
+  // events with unknown enqueue time are treated as fresh
+  llarp::path::TrafficEvent_t unknown;
+  CHECK(not TrafficEventIsStale(unknown, now, transit_queue_max_age));
+
+  // an event exactly at the age limit is not yet stale
+  llarp::path::TrafficEvent_t edge;
+  edge.queuedAt = now - transit_queue_max_age;
+  CHECK(not TrafficEventIsStale(edge, now, transit_queue_max_age));
+}

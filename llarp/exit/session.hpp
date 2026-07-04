@@ -184,6 +184,8 @@ namespace llarp
 
       uint64_t m_Counter;
       llarp_time_t m_LastUse;
+      /// number of upstream messages dropped due to queue overflow
+      uint64_t m_UpstreamQueueDrops = 0;
 
       std::vector<SessionReadyFunc> m_PendingCallbacks;
       const bool m_BundleRC;

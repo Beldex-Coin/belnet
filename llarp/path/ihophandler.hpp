@@ -7,7 +7,10 @@
 #include <llarp/messages/relay.hpp>
 #include <vector>
 
+#include <atomic>
+#include <list>
 #include <memory>
+#include <utility>
 
 struct llarp_buffer_t;
 
@@ -22,9 +25,25 @@ namespace llarp
 
   namespace path
   {
+    /// a queued traffic event: payload + nonce, stamped with its enqueue
+    /// time so stale packets can be dropped at dequeue (anti-bufferbloat)
+    struct TrafficEvent_t : public std::pair<std::vector<byte_t>, TunnelNonce>
+    {
+      /// when this event was enqueued; 0s means unknown (treated as fresh)
+      llarp_time_t queuedAt = 0s;
+    };
+
+    /// return true if a traffic event has been sitting in a queue for longer
+    /// than maxAge as of now
+    inline bool
+    TrafficEventIsStale(const TrafficEvent_t& ev, llarp_time_t now, llarp_time_t maxAge)
+    {
+      return ev.queuedAt > 0s and now > ev.queuedAt and now - ev.queuedAt > maxAge;
+    }
+
     struct IHopHandler
     {
-      using TrafficEvent_t = std::pair<std::vector<byte_t>, TunnelNonce>;
+      using TrafficEvent_t = path::TrafficEvent_t;
       using TrafficQueue_t = std::list<TrafficEvent_t>;
 
       virtual ~IHopHandler() = default;
@@ -71,12 +90,33 @@ namespace llarp
       virtual void
       FlushDownstream(AbstractRouter* r) = 0;
 
+      /// total number of traffic events dropped by queue management
+      uint64_t
+      QueueDrops() const
+      {
+        return m_QueueDrops.load();
+      }
+
      protected:
       uint64_t m_SequenceNum = 0;
       TrafficQueue_t m_UpstreamQueue;
       TrafficQueue_t m_DownstreamQueue;
       util::DecayingHashSet<TunnelNonce> m_UpstreamReplayFilter;
       util::DecayingHashSet<TunnelNonce> m_DownstreamReplayFilter;
+      /// count of events dropped for being stale or overflowing the queue
+      std::atomic<uint64_t> m_QueueDrops{0};
+      /// last time we logged about queue drops (rate limited)
+      std::atomic<int64_t> m_LastDropWarnAt{0};
+
+      /// drop-from-head when a queue exceeds its bound; increments the drop
+      /// counter. call before emplacing a new event.
+      void
+      EnforceQueueBound(TrafficQueue_t& queue);
+
+      /// return true (and account for it) if this event is too old to be
+      /// worth processing; logs a rate-limited warning at most every 5s
+      bool
+      DropStale(const TrafficEvent_t& ev, llarp_time_t now);
 
       virtual void
       UpstreamWork(TrafficQueue_t queue, AbstractRouter* r) = 0;

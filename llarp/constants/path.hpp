@@ -39,5 +39,9 @@ namespace llarp
     /// how big transit hop traffic queues are
     constexpr std::size_t transit_hop_queue_size = 256;
 
+    /// drop queued traffic events older than this at dequeue time; bounds
+    /// standing queue delay through busy relays/exits (anti-bufferbloat)
+    constexpr std::chrono::milliseconds transit_queue_max_age = 200ms;
+
   }  // namespace path
 }  // namespace llarp

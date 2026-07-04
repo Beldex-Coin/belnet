@@ -115,8 +115,12 @@ namespace llarp
         }
         self->HandleAllDownstream(std::move(msgs), r);
       };
+      const auto now = llarp::time_now_ms();
       for (auto& ev : msgs)
       {
+        // drop events that sat in the queue too long (anti-bufferbloat)
+        if (DropStale(ev, now))
+          continue;
         RelayDownstreamMessage msg;
         const llarp_buffer_t buf(ev.first);
         msg.pathid = info.rxID;
@@ -143,8 +147,12 @@ namespace llarp
     void
     TransitHop::UpstreamWork(TrafficQueue_t msgs, AbstractRouter* r)
     {
+      const auto now = llarp::time_now_ms();
       for (auto& ev : msgs)
       {
+        // drop events that sat in the queue too long (anti-bufferbloat)
+        if (DropStale(ev, now))
+          continue;
         const llarp_buffer_t buf(ev.first);
         RelayUpstreamMessage msg;
         CryptoManager::instance()->xchacha20(buf, pathKey, ev.second);

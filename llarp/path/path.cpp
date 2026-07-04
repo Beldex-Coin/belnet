@@ -362,6 +362,7 @@ namespace llarp
           {"rxRateCurrent", m_LastRXRate},
           {"replayTX", m_UpstreamReplayFilter.Size()},
           {"replayRX", m_DownstreamReplayFilter.Size()},
+          {"queueDrops", QueueDrops()},
           {"hasExit", SupportsAnyRoles(ePathRoleExit)}};
 
       std::vector<util::StatusObject> hopsObj;
@@ -506,10 +507,14 @@ namespace llarp
     void
     Path::UpstreamWork(TrafficQueue_t msgs, AbstractRouter* r)
     {
-      std::vector<RelayUpstreamMessage> sendmsgs(msgs.size());
-      size_t idx = 0;
+      std::vector<RelayUpstreamMessage> sendmsgs;
+      sendmsgs.reserve(msgs.size());
+      const auto now = llarp::time_now_ms();
       for (auto& ev : msgs)
       {
+        // drop events that sat in the queue too long (anti-bufferbloat)
+        if (DropStale(ev, now))
+          continue;
         const llarp_buffer_t buf(ev.first);
         TunnelNonce n = ev.second;
         for (const auto& hop : hops)
@@ -517,12 +522,13 @@ namespace llarp
           CryptoManager::instance()->xchacha20(buf, hop.shared, n);
           n ^= hop.nonceXOR;
         }
-        auto& msg = sendmsgs[idx];
+        auto& msg = sendmsgs.emplace_back();
         msg.X = buf;
         msg.Y = ev.second;
         msg.pathid = TXID();
-        ++idx;
       }
+      if (sendmsgs.empty())
+        return;
       r->loop()->call([self = shared_from_this(), data = std::move(sendmsgs), r]() mutable {
         self->HandleAllUpstream(std::move(data), r);
       });
@@ -580,20 +586,26 @@ namespace llarp
     void
     Path::DownstreamWork(TrafficQueue_t msgs, AbstractRouter* r)
     {
-      std::vector<RelayDownstreamMessage> sendMsgs(msgs.size());
-      size_t idx = 0;
+      std::vector<RelayDownstreamMessage> sendMsgs;
+      sendMsgs.reserve(msgs.size());
+      const auto now = llarp::time_now_ms();
       for (auto& ev : msgs)
       {
+        // drop events that sat in the queue too long (anti-bufferbloat)
+        if (DropStale(ev, now))
+          continue;
         const llarp_buffer_t buf(ev.first);
-        sendMsgs[idx].Y = ev.second;
+        auto& msg = sendMsgs.emplace_back();
+        msg.Y = ev.second;
         for (const auto& hop : hops)
         {
-          sendMsgs[idx].Y ^= hop.nonceXOR;
-          CryptoManager::instance()->xchacha20(buf, hop.shared, sendMsgs[idx].Y);
+          msg.Y ^= hop.nonceXOR;
+          CryptoManager::instance()->xchacha20(buf, hop.shared, msg.Y);
         }
-        sendMsgs[idx].X = buf;
-        ++idx;
+        msg.X = buf;
       }
+      if (sendMsgs.empty())
+        return;
       r->loop()->call([self = shared_from_this(), msgs = std::move(sendMsgs), r]() mutable {
         self->HandleAllDownstream(std::move(msgs), r);
       });
