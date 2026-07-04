@@ -19,6 +19,11 @@ bool value that sets if we publish our mnapp to the dht
 `false`: we are not reachable via dht
 ### hops
 number of hops in a path, min is `1`, max is `8`, defaults to `4`
+
+setting this to `3` gives a "fast mode": one less relay traversal in each
+direction (typically a 25-40% RTT reduction and one less queueing/loss
+point) at a reduced-anonymity cost. the effective value is logged at
+startup as `configured with numHops=`.
 ### paths
 number of paths to maintain at any given time, defaults to `6`.
 ### blacklist-mnode

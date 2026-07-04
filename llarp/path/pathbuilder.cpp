@@ -189,6 +189,9 @@ namespace llarp
     Builder::Builder(AbstractRouter* p_router, size_t pathNum, size_t hops)
         : path::PathSet{pathNum}, _run{true}, m_router{p_router}, numHops{hops}
     {
+      // log the hop count so a misapplied [network]:hops override (e.g. via
+      // the Android config bridge for 3-hop fast mode) is easy to spot
+      LogDebug("path builder created with numHops=", numHops, " numPaths=", pathNum);
       CryptoManager::instance()->encryption_keygen(enckey);
     }
 
