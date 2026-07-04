@@ -87,6 +87,15 @@ namespace llarp
         return GetHopsAlignedToForBuild(m_ExitRouter);
     }
 
+    std::optional<std::vector<RouterContact>>
+    BaseSession::GetHopsForHedgedBuild(const std::set<RouterID>& exclude)
+    {
+      if (numHops == 1)
+        return GetHopsForBuild();
+      // stay aligned to our exit but avoid the hops of in-flight builds
+      return GetHopsAlignedToForBuild(m_ExitRouter, exclude);
+    }
+
     bool
     BaseSession::CheckPathDead(path::Path_ptr, llarp_time_t dlt)
     {

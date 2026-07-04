@@ -212,6 +212,8 @@ namespace llarp
       ExpirePaths(now, m_router);
       if (ShouldBuildMore(now))
         BuildOne();
+      else
+        TryHedgedBuild(now);
       TickPaths(m_router);
       if (m_BuildStats.attempts > 50)
       {
@@ -338,6 +340,63 @@ namespace llarp
     {
       if (const auto maybe = GetHopsForBuild())
         Build(*maybe, roles);
+    }
+
+    void
+    Builder::TryHedgedBuild(llarp_time_t now)
+    {
+      /// how long a pending build may be outstanding before we hedge
+      static constexpr auto HedgeThreshold = 3s;
+      if (IsStopped())
+        return;
+      // respect the minimum spacing between build attempts
+      if (now < lastBuild + MIN_PATH_BUILD_INTERVAL)
+        return;
+      if (NumInStatus(ePathEstablished) >= numDesiredPaths)
+        return;
+      if (NumInStatus(ePathBuilding) >= numDesiredPaths)
+        return;
+      bool stalled = false;
+      std::set<RouterID> exclude;
+      ForEachPath([&](const Path_ptr& p) {
+        if (p->Status() != ePathBuilding)
+          return;
+        if (now > p->buildStarted and now - p->buildStarted > HedgeThreshold)
+          stalled = true;
+        // hedge on a hop set disjoint from all in-flight builds; keep the
+        // terminal endpoint since aligned builders must reuse it
+        for (size_t idx = 0; idx + 1 < p->hops.size(); ++idx)
+          exclude.insert(p->hops[idx].rc.pubkey);
+      });
+      if (not stalled)
+        return;
+      // race a second build against the stalled one instead of waiting for
+      // the full build timeout; first to finish wins. Build() still applies
+      // the per-edge pathBuildLimiter.
+      if (const auto maybe = GetHopsForHedgedBuild(exclude))
+      {
+        LogInfo(Name(), " hedging: starting a second build with disjoint hops");
+        Build(*maybe);
+      }
+    }
+
+    std::optional<std::vector<RouterContact>>
+    Builder::GetHopsForHedgedBuild(const std::set<RouterID>& exclude)
+    {
+      auto filter = [&exclude, r = m_router](const auto& rc) -> bool {
+        return exclude.count(rc.pubkey) == 0
+            and not r->routerProfiling().IsBadForPath(rc.pubkey, 1);
+      };
+      if (const auto maybe = m_router->nodedb()->GetRandom(filter))
+        return GetHopsAlignedToForBuild(maybe->pubkey, exclude);
+      return std::nullopt;
+    }
+
+    void
+    Builder::ResetBackoff()
+    {
+      buildIntervalLimit = MIN_PATH_BUILD_INTERVAL;
+      lastBuild = 0s;
     }
 
     bool
@@ -490,7 +549,8 @@ namespace llarp
     void
     Builder::HandlePathBuilt(Path_ptr p)
     {
-      buildIntervalLimit = PATH_BUILD_RATE;
+      // one success fully resets the backoff so recovery is immediate
+      buildIntervalLimit = MIN_PATH_BUILD_INTERVAL;
       m_router->routerProfiling().MarkPathSuccess(p.get());
       // attribute the measured end-to-end latency to the routers on the path
       // so it can steer future hop selection and be persisted in profiles.dat
@@ -511,7 +571,10 @@ namespace llarp
     void
     Builder::DoPathBuildBackoff()
     {
-      static constexpr std::chrono::milliseconds MaxBuildInterval = 30s;
+      // capped at 10s (was 30s): after a burst of failures - typical right
+      // after a mobile network change - the daemon should not sit tens of
+      // seconds doing nothing while the app shows "connecting"
+      static constexpr std::chrono::milliseconds MaxBuildInterval = 10s;
       // linear backoff
       buildIntervalLimit = std::min(PATH_BUILD_RATE + buildIntervalLimit, MaxBuildInterval);
       LogWarn(Name(), " build interval is now ", ToString(buildIntervalLimit));

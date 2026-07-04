@@ -258,6 +258,7 @@ namespace llarp
     void
     TunEndpoint::Thaw()
     {
+      Endpoint::Thaw();
       if (m_DNS)
         m_DNS->Reset();
     }

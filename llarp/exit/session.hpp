@@ -83,6 +83,9 @@ namespace llarp
       std::optional<std::vector<RouterContact>>
       GetHopsForBuild() override;
 
+      std::optional<std::vector<RouterContact>>
+      GetHopsForHedgedBuild(const std::set<RouterID>& exclude) override;
+
       bool
       ShouldBuildMore(llarp_time_t now) const override;
 

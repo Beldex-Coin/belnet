@@ -810,6 +810,16 @@ namespace llarp
       m_state->m_LastPublish = now;
     }
 
+    void
+    Endpoint::Thaw()
+    {
+      // network changed / woke from sleep: reset the path build backoff so
+      // recovery does not wait out a backoff interval accumulated while the
+      // old network was failing
+      LogInfo(Name(), " thawed, resetting path build backoff");
+      ResetBackoff();
+    }
+
     std::optional<std::vector<RouterContact>>
     Endpoint::GetHopsForBuild()
     {

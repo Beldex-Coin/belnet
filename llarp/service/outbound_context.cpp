@@ -476,6 +476,18 @@ namespace llarp
       return GetHopsAlignedToForBuild(m_NextIntro.router, m_Endpoint->MnodeBlacklist());
     }
 
+    std::optional<std::vector<RouterContact>>
+    OutboundContext::GetHopsForHedgedBuild(const std::set<RouterID>& exclude)
+    {
+      if (m_NextIntro.router.IsZero())
+        return std::nullopt;
+      // stay aligned to the current intro router but avoid the hops of
+      // in-flight builds
+      auto merged = m_Endpoint->MnodeBlacklist();
+      merged.insert(exclude.begin(), exclude.end());
+      return GetHopsAlignedToForBuild(m_NextIntro.router, merged);
+    }
+
     bool
     OutboundContext::ShouldBuildMore(llarp_time_t now) const
     {

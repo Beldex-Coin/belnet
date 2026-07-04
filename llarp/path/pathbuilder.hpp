@@ -56,6 +56,12 @@ namespace llarp
       void
       DoPathBuildBackoff();
 
+      /// speculatively start one additional build with a disjoint hop set
+      /// when a pending build has been outstanding for a while, instead of
+      /// waiting for the full build timeout (hedged build)
+      void
+      TryHedgedBuild(llarp_time_t now);
+
      public:
       AbstractRouter* const m_router;
       SecretKey enckey;
@@ -131,6 +137,17 @@ namespace llarp
 
       virtual std::optional<std::vector<RouterContact>>
       GetHopsForBuild() override;
+
+      /// get hops for a hedged build, avoiding the given routers so the new
+      /// attempt does not share fate with the builds already in flight
+      virtual std::optional<std::vector<RouterContact>>
+      GetHopsForHedgedBuild(const std::set<RouterID>& exclude);
+
+      /// reset the path build backoff to its minimum; called after external
+      /// connectivity change signals (e.g. network switch on mobile) so
+      /// recovery does not wait out a stale backoff interval
+      void
+      ResetBackoff();
 
       void
       ManualRebuild(size_t N, PathRole roles = ePathRoleAny);
