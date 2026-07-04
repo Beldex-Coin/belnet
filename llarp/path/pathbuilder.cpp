@@ -461,6 +461,10 @@ namespace llarp
     {
       buildIntervalLimit = PATH_BUILD_RATE;
       m_router->routerProfiling().MarkPathSuccess(p.get());
+      // attribute the measured end-to-end latency to the routers on the path
+      // so it can steer future hop selection and be persisted in profiles.dat
+      if (p->intro.latency > 0s)
+        m_router->routerProfiling().MarkPathLatency(p.get(), p->intro.latency);
 
       LogInfo(p->Name(), " built latency=", ToString(p->intro.latency));
       m_BuildStats.success++;

@@ -43,6 +43,7 @@ add_executable(testAll
   util/test_llarp_util_log_level.cpp
   util/test_llarp_util_str.cpp
   test_llarp_encrypted_frame.cpp
+  test_llarp_profiling.cpp
   test_llarp_router_contact.cpp)
 
 if(WITH_PEERSTATS_BACKEND)

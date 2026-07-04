@@ -350,6 +350,7 @@ namespace llarp
 
       util::StatusObject obj{
           {"intro", intro.ExtractStatus()},
+          {"latencyMs", static_cast<uint64_t>(intro.latency.count())},
           {"lastRecvMsg", to_json(m_LastRecvMessage)},
           {"lastLatencyTest", to_json(m_LastLatencyTestTime)},
           {"buildStarted", to_json(buildStarted)},

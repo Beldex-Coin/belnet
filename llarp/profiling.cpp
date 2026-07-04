@@ -21,6 +21,10 @@ namespace llarp
   RouterProfile::BEncode(bt_dict_producer& dict) const
   {
     dict.append("g", connectGoodCount);
+    // latency keys are optional so that old belnet versions can still read
+    // profiles.dat files written by this version and vice versa
+    dict.append("la", latencyAccum.count());
+    dict.append("ln", latencySamples);
     dict.append("p", pathSuccessCount);
     dict.append("q", pathTimeoutCount);
     dict.append("s", pathFailCount);
@@ -35,6 +39,10 @@ namespace llarp
   {
     if (dict.skip_until("g"))
       connectGoodCount = dict.consume_integer<uint64_t>();
+    if (dict.skip_until("la"))
+      latencyAccum = llarp_time_t{dict.consume_integer<uint64_t>()};
+    if (dict.skip_until("ln"))
+      latencySamples = dict.consume_integer<uint64_t>();
     if (dict.skip_until("p"))
       pathSuccessCount = dict.consume_integer<uint64_t>();
     if (dict.skip_until("q"))
@@ -239,6 +247,55 @@ namespace llarp
       profile.pathSuccessCount += sz;
       profile.lastUpdated = llarp::time_now_ms();
     }
+  }
+
+  void
+  Profiling::MarkPathLatency(path::Path* p, llarp_time_t latency)
+  {
+    if (latency <= 0s or p->hops.empty())
+      return;
+    util::Lock lock{m_ProfilesMutex};
+    // attribute an equal share of the end-to-end latency to each hop we are
+    // not directly connected to (the first hop link is measured separately)
+    const auto share = latency / p->hops.size();
+    bool first = true;
+    for (const auto& hop : p->hops)
+    {
+      if (first)
+      {
+        first = false;
+        continue;
+      }
+      auto& profile = m_Profiles[hop.rc.pubkey];
+      profile.latencyAccum += share;
+      profile.latencySamples += 1;
+      profile.lastUpdated = llarp::time_now_ms();
+    }
+  }
+
+  std::vector<std::pair<RouterID, llarp_time_t>>
+  Profiling::GetLatencyEstimates(size_t maxEntries) const
+  {
+    std::vector<std::pair<RouterID, llarp_time_t>> ret;
+    std::vector<std::pair<uint64_t, const std::pair<const RouterID, RouterProfile>*>> sampled;
+    {
+      util::Lock lock{m_ProfilesMutex};
+      sampled.reserve(m_Profiles.size());
+      for (const auto& item : m_Profiles)
+      {
+        if (item.second.latencySamples > 0)
+          sampled.emplace_back(item.second.latencySamples, &item);
+      }
+      std::sort(sampled.begin(), sampled.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.first > rhs.first;
+      });
+      if (sampled.size() > maxEntries)
+        sampled.resize(maxEntries);
+      ret.reserve(sampled.size());
+      for (const auto& [samples, item] : sampled)
+        ret.emplace_back(item->first, item->second.EstLatency());
+    }
+    return ret;
   }
 
   bool

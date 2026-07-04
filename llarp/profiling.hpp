@@ -24,9 +24,22 @@ namespace llarp
     uint64_t pathSuccessCount = 0;
     uint64_t pathFailCount = 0;
     uint64_t pathTimeoutCount = 0;
+    /// number of latency samples attributed to this router
+    uint64_t latencySamples = 0;
+    /// accumulated latency attributed to this router
+    llarp_time_t latencyAccum = 0s;
     llarp_time_t lastUpdated = 0s;
     llarp_time_t lastDecay = 0s;
     uint64_t version = llarp::constants::proto_version;
+
+    /// estimated per-router latency contribution, 0 if we have no samples
+    llarp_time_t
+    EstLatency() const
+    {
+      if (latencySamples == 0)
+        return 0s;
+      return latencyAccum / latencySamples;
+    }
 
     RouterProfile() = default;
     RouterProfile(oxenc::bt_dict_consumer dict);
@@ -93,6 +106,15 @@ namespace llarp
 
     void
     MarkPathSuccess(path::Path* p) EXCLUDES(m_ProfilesMutex);
+
+    /// attribute a measured end-to-end path latency to the routers on the path
+    void
+    MarkPathLatency(path::Path* p, llarp_time_t latency) EXCLUDES(m_ProfilesMutex);
+
+    /// get the estimated latency contribution of the (at most) maxEntries
+    /// most-sampled routers, sorted by sample count descending
+    std::vector<std::pair<RouterID, llarp_time_t>>
+    GetLatencyEstimates(size_t maxEntries) const EXCLUDES(m_ProfilesMutex);
 
     void
     MarkHopFail(const RouterID& r) EXCLUDES(m_ProfilesMutex);

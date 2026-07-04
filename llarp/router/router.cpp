@@ -98,6 +98,10 @@ namespace llarp
     if (not _running)
       util::StatusObject{{"running", false}};
 
+    util::StatusObject routerLatency;
+    for (const auto& [rid, latency] : _routerProfiling.GetLatencyEstimates(20))
+      routerLatency[rid.ToString()] = static_cast<uint64_t>(latency.count());
+
     return util::StatusObject{
         {"running", true},
         {"numNodesKnown", _nodedb->NumLoaded()},
@@ -105,7 +109,8 @@ namespace llarp
         {"services", _hiddenServiceContext.ExtractStatus()},
         {"exit", _exitContext.ExtractStatus()},
         {"links", _linkManager.ExtractStatus()},
-        {"outboundMessages", _outboundMessageHandler.ExtractStatus()}};
+        {"outboundMessages", _outboundMessageHandler.ExtractStatus()},
+        {"routerLatency", std::move(routerLatency)}};
   }
 
   util::StatusObject
