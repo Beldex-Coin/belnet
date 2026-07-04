@@ -525,8 +525,27 @@ namespace llarp
       const RouterID edge{hops[0].pubkey};
       if (not m_router->pathBuildLimiter().Attempt(edge))
       {
-        LogWarn(Name(), " building too fast to edge router ", edge);
-        return;
+        // count our distinct usable first-hop candidates: if this edge is
+        // the only one (common on mobile with a pinned first hop or a tiny
+        // nodedb), bypass the limiter so rebuilds are never starved during
+        // recovery, instead of rejecting with nowhere else to go
+        size_t numEdges = 0;
+        m_router->ForEachPeer(
+            [&numEdges](const ILinkSession* s, bool isOutbound) {
+              if (s and s->IsEstablished() and isOutbound)
+                ++numEdges;
+            },
+            true);
+        if (numEdges > 1)
+        {
+          LogWarn(Name(), " building too fast to edge router ", edge);
+          return;
+        }
+        LogWarn(
+            Name(),
+            " building too fast to edge router ",
+            edge,
+            ", proceeding anyway because it is our only usable edge");
       }
       // async generate keys
       auto ctx = std::make_shared<AsyncPathKeyExchangeContext>();

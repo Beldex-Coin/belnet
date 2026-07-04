@@ -26,6 +26,7 @@
 #include <fstream>
 #include <cstdlib>
 #include <iterator>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #if defined(ANDROID) || defined(IOS)
@@ -440,7 +441,17 @@ namespace llarp
       throw std::runtime_error("Failed to start rpc server");
 
     if (conf.router.m_workerThreads > 0)
+    {
       m_lmq->set_general_threads(conf.router.m_workerThreads);
+      LogInfo("using ", conf.router.m_workerThreads, " worker threads");
+    }
+    else
+    {
+      LogInfo(
+          "using ",
+          std::thread::hardware_concurrency(),
+          " worker threads (hardware concurrency)");
+    }
 
     log::debug(logcat, "Starting OMQ server");
     m_lmq->start();

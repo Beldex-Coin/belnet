@@ -51,7 +51,15 @@ namespace llarp
   RouterConfig::defineConfigOptions(ConfigDefinition& conf, const ConfigGenParameters& params)
   {
     constexpr Default DefaultJobQueueSize{1024 * 8};
+#ifdef ANDROID
+    // explicit default of 2 crypto worker threads on android: phones use
+    // big.LITTLE core layouts where hardware_concurrency over-counts the
+    // usefully schedulable cores and oversubscribes during connect bursts,
+    // adding handshake latency (audit finding D10)
+    constexpr Default DefaultWorkerThreads{2};
+#else
     constexpr Default DefaultWorkerThreads{0};
+#endif
     constexpr Default DefaultBlockBogons{true};
 
     conf.defineOption<int>(
