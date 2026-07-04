@@ -1,6 +1,7 @@
 #include "server.hpp"
 #include <llarp/constants/platform.hpp>
 #include <llarp/constants/apple.hpp>
+#include "cache.hpp"
 #include "dns.hpp"
 #include <iterator>
 #include <llarp/crypto/crypto.hpp>
@@ -128,6 +129,10 @@ namespace llarp::dns
       std::optional<SockAddr> m_LocalAddr;
       std::unordered_set<std::shared_ptr<Query>> m_Pending;
 
+      /// TTL cache in front of the upstream resolver so repeated queries do
+      /// not pay a full onion round trip each time
+      QueryCache m_QueryCache;
+
       struct ub_result_deleter
       {
         void
@@ -170,6 +175,18 @@ namespace llarp::dns
         hdr.id = query->Underlying().hdr_id;
         buf.cur = buf.base;
         hdr.Encode(&buf);
+
+        // populate the dns cache from the upstream response so repeated
+        // queries can be answered locally (txid is patched on cache hits)
+        if (auto parent_ptr = query->parent.lock();
+            parent_ptr and not query->Underlying().questions.empty())
+        {
+          if (auto response = MaybeParseDNSMessage(llarp_buffer_t{pkt}))
+          {
+            parent_ptr->m_QueryCache.Put(
+                query->Underlying().questions[0], *response, llarp::time_now_ms());
+          }
+        }
 
         // send reply
         query->SendReply(std::move(pkt));
@@ -470,6 +487,16 @@ namespace llarp::dns
           log::critical(logcat, "no mainloop?");
       }
 
+      util::StatusObject
+      ResolverStats() const override
+      {
+        return {
+            {"name", std::string{ResolverName()}},
+            {"cacheHits", m_QueryCache.Hits()},
+            {"cacheMisses", m_QueryCache.Misses()},
+            {"cacheSize", static_cast<uint64_t>(m_QueryCache.Size())}};
+      }
+
       bool
       MaybeHookDNS(
           std::shared_ptr<PacketSource_Base> source,
@@ -535,6 +562,19 @@ namespace llarp::dns
 #endif
 
         const auto& q = query.questions[0];
+
+        // consult the TTL cache before paying a full onion round trip to
+        // the upstream resolver (.bdx/.mnode/local zones never get here,
+        // they are answered by higher ranked resolvers or rejected above)
+        if (auto cached = m_QueryCache.Get(q, llarp::time_now_ms()))
+        {
+          // patch the txid to the incoming query's id
+          cached->hdr_id = query.hdr_id;
+          log::trace(logcat, "dns from {} to {} answered from cache", from, to);
+          tmp->SendReply(cached->ToBuffer());
+          return true;
+        }
+
         if (auto err = ub_resolve_async(
                 m_ctx,
                 q.Name().c_str(),
@@ -595,6 +635,21 @@ namespace llarp::dns
   Server::GetAllResolvers() const
   {
     return {m_Resolvers.begin(), m_Resolvers.end()};
+  }
+
+  util::StatusObject
+  Server::ExtractStatus() const
+  {
+    std::vector<util::StatusObject> resolvers;
+    for (const auto& weak : m_Resolvers)
+    {
+      if (auto ptr = weak.lock())
+      {
+        if (auto stats = ptr->ResolverStats(); not stats.empty())
+          resolvers.push_back(std::move(stats));
+      }
+    }
+    return {{"resolvers", resolvers}};
   }
 
   void

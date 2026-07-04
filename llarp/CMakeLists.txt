@@ -97,6 +97,7 @@ endif()
 
 add_library(belnet-dns
   STATIC
+  dns/cache.cpp
   dns/message.cpp
   dns/name.cpp
   dns/platform.cpp

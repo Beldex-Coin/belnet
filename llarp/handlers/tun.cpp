@@ -219,6 +219,8 @@ namespace llarp
       auto obj = service::Endpoint::ExtractStatus();
       obj["ifaddr"] = m_OurRange.ToString();
       obj["ifname"] = m_IfName;
+      if (m_DNS)
+        obj["dns"] = m_DNS->ExtractStatus();
 
       std::vector<std::string> upstreamRes;
       for (const auto& ent : m_DnsConfig.m_upstreamDNS)

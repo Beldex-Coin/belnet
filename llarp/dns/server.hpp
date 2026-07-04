@@ -6,6 +6,7 @@
 #include <llarp/ev/ev.hpp>
 #include <llarp/net/net.hpp>
 #include <llarp/util/fs.hpp>
+#include <llarp/util/status.hpp>
 #include <set>
 
 namespace llarp::dns
@@ -189,6 +190,16 @@ namespace llarp::dns
     Down()
     {}
 
+    /// resolver specific stats for status/introspection output.
+    /// default is empty. (distinct name from ExtractStatus to avoid
+    /// clashing with unrelated ExtractStatus methods of subclasses that
+    /// multiply inherit from this interface)
+    virtual util::StatusObject
+    ResolverStats() const
+    {
+      return {};
+    }
+
     /// attempt to handle a dns message
     /// returns true if we consumed this query and it should not be processed again
     virtual bool
@@ -271,6 +282,10 @@ namespace llarp::dns
     /// true for intercepting all queries. false for just .bdx and .mnode
     void
     SetDNSMode(bool all_queries);
+
+    /// introspection: stats of all our resolvers (dns cache hits/misses etc)
+    util::StatusObject
+    ExtractStatus() const;
 
    protected:
     EventLoop_ptr m_Loop;

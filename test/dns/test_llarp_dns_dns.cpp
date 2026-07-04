@@ -1,4 +1,5 @@
 #include <catch2/catch.hpp>
+#include <dns/cache.hpp>
 #include <dns/dns.hpp>
 #include <dns/message.hpp>
 #include <dns/name.hpp>
@@ -215,4 +216,116 @@ TEST_CASE("Test reserved names", "[dns]")
     CHECK_FALSE(NameIsReserved("barmnode.bdx"));
     CHECK_FALSE(NameIsReserved("allthebdx.bdx"));
     CHECK_FALSE(NameIsReserved("allthebdx.bdx."));
+}
+
+TEST_CASE("QueryCache hit after put with TTL rewrite", "[dns][cache]")
+{
+  using namespace std::literals;
+  llarp::dns::QueryCache cache;
+  llarp::dns::Question q{"example.com", llarp::dns::qTypeA};
+
+  llarp::dns::Message answer{q};
+  answer.AddINReply(llarp::huint128_t{42}, false, 60);
+
+  // miss before put
+  CHECK(not cache.Get(q, 1000ms).has_value());
+  CHECK(cache.Misses() == 1);
+
+  cache.Put(q, answer, 1000ms);
+
+  // hit 2 seconds later; TTL wound down by elapsed time
+  auto hit = cache.Get(q, 3000ms);
+  REQUIRE(hit.has_value());
+  REQUIRE(hit->answers.size() == 1);
+  CHECK(hit->answers[0].ttl == 58);
+  CHECK(cache.Hits() == 1);
+
+  // qname matching is case insensitive
+  llarp::dns::Question upper{"EXAMPLE.com", llarp::dns::qTypeA};
+  CHECK(cache.Get(upper, 3000ms).has_value());
+
+  // different qtype is a different key
+  llarp::dns::Question v6{"example.com", llarp::dns::qTypeAAAA};
+  CHECK(not cache.Get(v6, 3000ms).has_value());
+}
+
+TEST_CASE("QueryCache txid patching is caller's job and content survives", "[dns][cache]")
+{
+  using namespace std::literals;
+  llarp::dns::QueryCache cache;
+  llarp::dns::Question q{"txid.example.com", llarp::dns::qTypeA};
+
+  llarp::dns::Message answer{q};
+  answer.hdr_id = 0x1234;
+  answer.AddINReply(llarp::huint128_t{7}, false, 100);
+  cache.Put(q, answer, 0ms);
+
+  auto hit = cache.Get(q, 0ms);
+  REQUIRE(hit.has_value());
+  // patch txid like the resolver does for the incoming query
+  hit->hdr_id = 0x5678;
+  CHECK(hit->hdr_id == 0x5678);
+  // the cached original is untouched
+  auto hit2 = cache.Get(q, 0ms);
+  REQUIRE(hit2.has_value());
+  CHECK(hit2->hdr_id == 0x1234);
+}
+
+TEST_CASE("QueryCache TTL expiry and floors", "[dns][cache]")
+{
+  using namespace std::literals;
+  llarp::dns::QueryCache cache;
+  llarp::dns::Question q{"expire.example.com", llarp::dns::qTypeA};
+
+  llarp::dns::Message answer{q};
+  answer.AddINReply(llarp::huint128_t{1}, false, 60);
+  cache.Put(q, answer, 0ms);
+
+  // still valid just before 60s
+  CHECK(cache.Get(q, 59s).has_value());
+  // expired after 60s
+  CHECK(not cache.Get(q, 61s).has_value());
+
+  // an answer with a tiny TTL is kept for the 5s floor
+  llarp::dns::Question q2{"floor.example.com", llarp::dns::qTypeA};
+  llarp::dns::Message answer2{q2};
+  answer2.AddINReply(llarp::huint128_t{2}, false, 1);
+  cache.Put(q2, answer2, 0ms);
+  CHECK(cache.Get(q2, 3s).has_value());
+  CHECK(not cache.Get(q2, 6s).has_value());
+}
+
+TEST_CASE("QueryCache negative caching", "[dns][cache]")
+{
+  using namespace std::literals;
+  llarp::dns::QueryCache cache;
+  llarp::dns::Question q{"nxdomain.example.com", llarp::dns::qTypeA};
+
+  // no answer records -> negative cache for 30s
+  llarp::dns::Message answer{q};
+  cache.Put(q, answer, 0ms);
+  CHECK(cache.Get(q, 29s).has_value());
+  CHECK(not cache.Get(q, 31s).has_value());
+}
+
+TEST_CASE("QueryCache enforces its size cap via LRU", "[dns][cache]")
+{
+  using namespace std::literals;
+  llarp::dns::QueryCache cache;
+
+  const auto fill = llarp::dns::QueryCache::MaxEntries;
+  for (size_t i = 0; i <= fill; ++i)
+  {
+    llarp::dns::Question q{"host" + std::to_string(i) + ".example.com", llarp::dns::qTypeA};
+    llarp::dns::Message answer{q};
+    answer.AddINReply(llarp::huint128_t{1}, false, 3600);
+    cache.Put(q, answer, 0ms);
+  }
+  CHECK(cache.Size() == fill);
+  // the least recently used (first inserted) entry was evicted
+  llarp::dns::Question first{"host0.example.com", llarp::dns::qTypeA};
+  CHECK(not cache.Get(first, 0ms).has_value());
+  // the newest entry is present
+  llarp::dns::Question last{"host" + std::to_string(fill) + ".example.com", llarp::dns::qTypeA};
+  CHECK(cache.Get(last, 0ms).has_value());
 }
