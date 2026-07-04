@@ -436,12 +436,16 @@ namespace llarp
         ++itr;
       }
       Path_ptr chosen = nullptr;
-      llarp_time_t minLatency = 30s;
+      // rank by EWMA latency + 2x jitter; paths whose latency data is
+      // stale (no sample in 30s) are deprioritized by LatencyScore()
+      const auto now = llarp::time_now_ms();
+      llarp_time_t minScore = 30s;
       for (const auto& path : established)
       {
-        if (path->intro.latency < minLatency and path->intro.latency != 0s)
+        const auto score = path->LatencyScore(now);
+        if (score != 0s and score < minScore)
         {
-          minLatency = path->intro.latency;
+          minScore = score;
           chosen = path;
         }
       }

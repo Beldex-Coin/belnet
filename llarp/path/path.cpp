@@ -363,6 +363,7 @@ namespace llarp
           {"replayTX", m_UpstreamReplayFilter.Size()},
           {"replayRX", m_DownstreamReplayFilter.Size()},
           {"queueDrops", QueueDrops()},
+          {"latencyJitterMs", static_cast<uint64_t>(m_Latency.jitter.count())},
           {"hasExit", SupportsAnyRoles(ePathRoleExit)}};
 
       std::vector<util::StatusObject> hopsObj;
@@ -461,8 +462,13 @@ namespace llarp
       // check to see if this path is dead
       if (_status == ePathEstablished)
       {
+        // probe frequently while the path carries traffic, slowly when idle
+        const auto probeInterval =
+            (m_LastTrafficAt > 0s and now - m_LastTrafficAt <= path::idle_latency_interval)
+            ? path::latency_interval
+            : path::idle_latency_interval;
         auto dlt = now - m_LastLatencyTestTime;
-        if (dlt > path::latency_interval && m_LastLatencyTestID == 0)
+        if (dlt > probeInterval && m_LastLatencyTestID == 0)
         {
           SendLatencyMessage(r);
           // latency test FEC
@@ -735,25 +741,13 @@ namespace llarp
     {
       if (auto parent = m_PathSet.lock())
       {
-        MarkActive(parent->Now());
+        const auto now = parent->Now();
+        MarkActive(now);
+        m_LastTrafficAt = now;
         return m_DataHandler && m_DataHandler(shared_from_this(), frame);
       }
       return false;
     }
-
-    template <typename Samples_t>
-    static llarp_time_t
-    computeLatency(const Samples_t& samps)
-    {
-      llarp_time_t mean = 0s;
-      if (samps.empty())
-        return mean;
-      for (const auto& samp : samps)
-        mean += samp;
-      return mean / samps.size();
-    }
-
-    constexpr auto MaxLatencySamples = 8;
 
     bool
     Path::HandlePathLatencyMessage(const routing::PathLatencyMessage&, AbstractRouter* r)
@@ -762,12 +756,11 @@ namespace llarp
       MarkActive(now);
       if (m_LastLatencyTestID)
       {
-        m_LatencySamples.emplace_back(now - m_LastLatencyTestTime);
-
-        while (m_LatencySamples.size() > MaxLatencySamples)
-          m_LatencySamples.pop_front();
-
-        intro.latency = computeLatency(m_LatencySamples);
+        // EWMA + jitter instead of a plain mean: reacts to degradation
+        // within a few samples and gives failover a jitter signal
+        m_Latency.AddSample(now - m_LastLatencyTestTime);
+        intro.latency = m_Latency.ewma;
+        m_LastLatencySampleAt = now;
         m_LastLatencyTestID = 0;
         EnterState(ePathEstablished, now);
         if (m_BuiltHook)
@@ -915,8 +908,10 @@ namespace llarp
         if (m_ExitTrafficHandler(
                 self, llarp_buffer_t(pkt.data() + 8, pkt.size() - 8), counter, msg.protocol))
         {
-          MarkActive(r->Now());
-          EnterState(ePathEstablished, r->Now());
+          const auto now = r->Now();
+          MarkActive(now);
+          m_LastTrafficAt = now;
+          EnterState(ePathEstablished, now);
         }
       }
       return sent;

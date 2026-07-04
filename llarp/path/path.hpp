@@ -68,6 +68,40 @@ namespace llarp
           < std::tie(rhs.txID, rhs.rxID, rhs.rc, rhs.upstream, rhs.lifetime);
     }
 
+    /// EWMA-based latency and jitter accumulator for path latency probes
+    /// (alpha = 0.3). replaces a plain mean of the last samples: reacts to
+    /// path degradation within a few samples and exposes jitter, which a
+    /// plain mean hides entirely.
+    struct LatencyStats
+    {
+      llarp_time_t ewma = 0s;
+      llarp_time_t jitter = 0s;
+
+      void
+      AddSample(llarp_time_t sample)
+      {
+        if (sample < 0s)
+          return;
+        if (ewma == 0s)
+        {
+          ewma = sample;
+          return;
+        }
+        const auto delta = sample > ewma ? sample - ewma : ewma - sample;
+        // jitter uses the deviation from the previous ewma
+        jitter = (jitter * 7 + delta * 3) / 10;
+        ewma = (ewma * 7 + sample * 3) / 10;
+      }
+
+      /// ranking score: latency plus twice the jitter, the thing
+      /// interactive traffic actually feels
+      llarp_time_t
+      Score() const
+      {
+        return ewma + jitter * 2;
+      }
+    };
+
     /// A path we made
     struct Path final : public IHopHandler,
                         public routing::IMessageHandler,
@@ -199,6 +233,27 @@ namespace llarp
       Status() const
       {
         return _status;
+      }
+
+      /// ranking score for picking the best established path:
+      /// EWMA latency + 2x jitter, doubled when the last latency sample is
+      /// older than 30s (stale data is suspect). 0s means no sample yet.
+      llarp_time_t
+      LatencyScore(llarp_time_t now) const
+      {
+        if (m_Latency.ewma == 0s)
+          return 0s;
+        auto score = m_Latency.Score();
+        if (now > m_LastLatencySampleAt and now - m_LastLatencySampleAt > 30s)
+          score = score * 2;
+        return score;
+      }
+
+      /// smoothed latency jitter estimate of this path
+      llarp_time_t
+      LatencyJitter() const
+      {
+        return m_Latency.jitter;
       }
 
       // handle data in upstream direction
@@ -427,7 +482,12 @@ namespace llarp
       uint64_t m_RXRate = 0;
       uint64_t m_LastTXRate = 0;
       uint64_t m_TXRate = 0;
-      std::deque<llarp_time_t> m_LatencySamples;
+      /// smoothed latency + jitter from the latency probes
+      LatencyStats m_Latency;
+      /// when the last latency sample arrived
+      llarp_time_t m_LastLatencySampleAt = 0s;
+      /// when this path last carried actual (non-probe) traffic
+      llarp_time_t m_LastTrafficAt = 0s;
       const std::string m_shortName;
     };
   }  // namespace path
